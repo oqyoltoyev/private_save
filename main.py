@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS downloads (
 """)
 conn.commit()
 
-
 # Fayl progressini yangilash
 async def update_progress(user_id, message_id, file_name, current, total, start_time):
     elapsed_time = time.time() - start_time
@@ -51,20 +50,38 @@ async def update_progress(user_id, message_id, file_name, current, total, start_
         "remaining_time": remaining_time
     }
 
+# Progress bar
+def progress_bar(current_bytes, total_bytes, length=30):
+    current_mb = current_bytes / (1024 * 1024)
+    total_mb = total_bytes / (1024 * 1024)
+    progress = current_mb / total_mb if total_mb > 0 else 0
+    filled_length = int(length * progress)
+    bar = '█' * filled_length + '-' * (length - filled_length)
+    return f"[{bar}] {current_mb:.2f}MB / {total_mb:.2f}MB ({progress * 100:.2f}%)"
 
+last_edit_time = {}  # Floodni oldini olish uchun global sozlama
+
+# Fayl yuklanish progressini yangilash
 async def progress_callback(current, total, message, user_id, msg_id, file_name, start_time):
-    data = await update_progress(user_id, msg_id, file_name, current, total, start_time)
-    progress = (current / total) * 100
+    now = time.time()
 
-    # Fayl yuklash jarayoni haqida ma'lumot
+    # flooddan himoya qilish: har 10 soniyada bir marta yangilash
+    if user_id in last_edit_time:
+        if now - last_edit_time[user_id] < 10:
+            return
+    last_edit_time[user_id] = now
+
+    data = await update_progress(user_id, msg_id, file_name, current, total, start_time)
+    bar = progress_bar(current, total)
+    remaining = f"{data['remaining_time'] // 60}m {data['remaining_time'] % 60}s"
+    speed = data['download_speed'] / 1024  # KB/s
+
     await message.edit(
         f"📂 **Yuklanmoqda...**\n"
-        f"✅ Progress: {progress:.2f}%\n"
-        f"🔽 Yuklangan hajm: {current} / {total} bayt\n"
-        f"🚀 Internet tezligi: {data['download_speed']:.2f} bayt/sek\n"
-        f"⏳ Qolgan vaqt: {data['remaining_time'] // 60}m {data['remaining_time'] % 60}s\n"
+        f"{bar}\n"
+        f"🚀 Tezlik: {speed:.2f} KB/s\n"
+        f"⏳ Qolgan vaqt: {remaining}\n"
     )
-
 
 # Fayl yuklash komandasi
 @client.on(events.NewMessage(pattern=r'\.download (-?\d+) \| (\d+)'))
@@ -102,7 +119,6 @@ async def download_handler(event):
     except Exception as e:
         await event.respond(f"❌ Xatolik yuz berdi: {str(e)}")
         print(f"Xatolik: {e}")
-
 
 # Holat haqida ma'lumot
 @client.on(events.NewMessage(pattern=r'\.holat'))
@@ -149,7 +165,6 @@ async def status_handler(event):
 
     await event.respond(status_message)
 
-
 # Rasmni Base64 kodlash va qayta tiklash
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.shu'))
 async def savepic(event):
@@ -166,36 +181,14 @@ async def savepic(event):
         download_restricted_content = await get_restricted_content.download_media()
 
         # Media faylni base64 kodlash
-        with open(download_restricted_content, "rb") as image2string:
-            converted_string = base64.b64encode(image2string.read())
+        with open(download_restricted_content, "rb") as img_file:
+            encoded_img = base64.b64encode(img_file.read()).decode()
 
-        with open("encoded_image.txt", "wb") as file:
-            file.write(converted_string)
-
-        # Faylni qayta dekodlash va rasmni yaratish
-        with open("encoded_image.txt", 'rb') as file:
-            byte = file.read()
-
-        with open("decoded_image.jpg", 'wb') as decodeit:
-            decodeit.write(base64.b64decode(byte))
-
-        # Foydalanuvchiga natijani yuborish
-        await client.send_file("me", "decoded_image.jpg", caption="Userbot yordamida saqlangan ✓")
-
-        # Oraliq fayllarni o'chirish
-        os.remove(download_restricted_content)
-        os.remove("decoded_image.jpg")
-        os.remove("encoded_image.txt")
+        await event.respond(f"📷 Fayl Base64 kodlandi:\n{encoded_img}")
 
     except Exception as e:
-        print(f"Xatolik: {e}")
-        await event.respond(f"Xatolik yuz berdi: {e}")
+        await event.respond(f"❌ Xatolik yuz berdi: {str(e)}")
 
-
-async def main():
-    await client.start()
-    print("Bot ishga tushdi...")
-    await client.run_until_disconnected()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Main qism
+client.start()
+client.run_until_disconnected()
